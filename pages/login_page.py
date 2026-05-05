@@ -4,189 +4,276 @@ from appium.webdriver.common.appiumby import AppiumBy
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-# Maps digit character → Android keycode event number
-DIGIT_KEYCODE = {
-    '0': 7, '1': 8, '2': 9, '3': 10,
-    '4': 11, '5': 12, '6': 13, '7': 14,
-    '8': 15, '9': 16,
-}
+ADB = '/home/fatima/android-sdk/platform-tools/adb'
 
 
-def adb_tap(x, y):
-    """Tap screen using adb — avoids UiAutomator2 crash."""
-    subprocess.run(['adb', 'shell', 'input', 'tap', str(x), str(y)])
-    time.sleep(0.8)
-
-
-def adb_type(text):
-    """Type text using adb input (email only — not for OTP boxes)."""
-    safe = text.replace('@', '\\@').replace('.', '\\.')
-    subprocess.run(['adb', 'shell', 'input', 'text', safe])
-    time.sleep(1)
-
-
-def adb_key(keycode_int):
-    """Send a single keyevent by numeric code."""
-    subprocess.run(['adb', 'shell', 'input', 'keyevent', str(keycode_int)])
-    time.sleep(0.35)  # give each OTP box time to register & shift focus
+def take_screenshot(name):
+    path = f'/tmp/{name}.png'
+    with open(path, 'wb') as f:
+        subprocess.run([ADB, 'exec-out', 'screencap', '-p'], stdout=f)
 
 
 class LoginPage:
+
+    LOGIN_EMAIL = (AppiumBy.CLASS_NAME, "android.widget.EditText")
+    LOGIN_BUTTON = (AppiumBy.ACCESSIBILITY_ID, "Login")
+    VERIFY_BUTTON = (AppiumBy.ACCESSIBILITY_ID, "Verify")
+
+# ── Locators ──────────────────────────────────────────────
+    ERROR_TEXT_CLASS = (AppiumBy.CLASS_NAME, "android.widget.TextView")
+
+
     def __init__(self, driver):
         self.driver = driver
-        self.wait   = WebDriverWait(driver, 25)
+        self.wait = WebDriverWait(driver, 25)
+        print("[INIT] LoginPage initialized")
 
-    # ── Locators ──────────────────────────────────────────────────
-    EMAIL_FIELD      = (AppiumBy.CLASS_NAME, 'android.widget.EditText')
-    LOGIN_BTN        = (AppiumBy.XPATH, '//android.widget.Button[@content-desc="Login"]')
-    OTP_SCREEN_TITLE = (AppiumBy.XPATH, '//*[@content-desc="Enter OTP"]')
-    OTP_EDIT_TEXT    = (AppiumBy.XPATH, '//android.widget.EditText')
-    VERIFY_BTN       = (AppiumBy.XPATH, '//android.widget.Button[@content-desc="Verify"]')
-    RESEND_OTP_BTN   = (AppiumBy.XPATH,
-                        '//*[contains(@content-desc,"Resend") or contains(@content-desc,"resend")]')
-    ERROR_MESSAGE    = (AppiumBy.XPATH,
-                        '//*[contains(@content-desc,"Invalid") or contains(@content-desc,"invalid")'
-                        ' or contains(@content-desc,"Wrong") or contains(@content-desc,"wrong")'
-                        ' or contains(@content-desc,"Error") or contains(@content-desc,"expired")]')
+    # ---------------- LOGIN SCREEN ----------------
 
-    # ── Login Screen ──────────────────────────────────────────────
     def wait_for_login_screen(self):
-        self.wait.until(EC.presence_of_element_located(self.EMAIL_FIELD))
-        time.sleep(2)
-        print("✅ Login screen loaded")
+        print("[wait_for_login_screen] START")
+        self.wait.until(EC.presence_of_element_located(self.LOGIN_BUTTON))
+        print("[wait_for_login_screen] DONE")
 
     def enter_email(self, email):
-        # Email EditText bounds from XML: [46,1348][1034,1538] → center (540, 1443)
-        adb_tap(540, 1443)
-        time.sleep(1)
-        subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_CTRL_A'])
-        subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_DEL'])
-        time.sleep(0.5)
-        adb_type(email)
-        print(f"📧 Email entered: {email}")
-
-    def tap_login(self):
-        """
-        Dismiss keyboard, then click Login.
-        Login button bounds from XML: [46,1584][1034,1745] → center (540, 1664)
-        Falls back to Appium element click if coordinate tap misses.
-        """
-        # 1. Dismiss keyboard
-        subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_BACK'])
+        field = self.wait.until(EC.element_to_be_clickable(self.LOGIN_EMAIL))
+        field.click()
         time.sleep(1)
 
-        # 2. Try Appium element click first (most reliable)
         try:
-            btn = self.wait.until(EC.element_to_be_clickable(self.LOGIN_BTN))
-            btn.click()
-            print("🖱️  Login button clicked via Appium element")
+            field.clear()
         except Exception:
-            # 3. Fallback: coordinate tap
-            print("⚠️  Appium click failed — falling back to adb tap (540, 1664)")
-            adb_tap(540, 1664)
+            pass
 
-        time.sleep(4)
-        print("📨 OTP request sent — waiting for OTP screen…")
+        try:
+            field.send_keys(email)
+        except Exception:
+            field.click()
+            time.sleep(1)
+            field.send_keys(email)
 
-    # ── OTP Screen ────────────────────────────────────────────────
-    def wait_for_otp_screen(self):
-        self.wait.until(EC.presence_of_element_located(self.OTP_SCREEN_TITLE))
-        time.sleep(1.5)
-        print("✅ OTP screen loaded")
+    def tap_send_otp(self):
+        btn = self.wait.until(
+            EC.element_to_be_clickable(self.LOGIN_BUTTON)
+        )
+        btn.click()
 
-    def enter_otp(self, otp):
-        """
-        The 6 visual OTP boxes share a single EditText:
-          bounds="[42,709][1038,835]" → center (540, 772)
+    # ---------------- OTP SCREEN ----------------
 
-        Strategy:
-          1. Tap to focus the field
-          2. Clear with CTRL_A + DEL
-          3. Re-tap so focus is restored after clear
-          4. Send each digit as an individual KEYCODE (0–9)
-             — this reliably triggers each box's focus-advance logic,
-               unlike `input text` which can dump all chars at once
-        """
-        otp_str = str(otp).strip()
-        print(f"🔢 Entering OTP digit-by-digit: {otp_str}")
+    def wait_for_otp_screen(self, timeout=60):
+        print("[wait_for_otp_screen] START")
 
-        # Step 1: Focus
-        adb_tap(540, 772)
-        time.sleep(0.8)
+        end = time.time() + timeout
+        while time.time() < end:
+            otp_fields = self.driver.find_elements(AppiumBy.CLASS_NAME, "android.widget.EditText")
+            verify_btn = self.driver.find_elements(AppiumBy.ACCESSIBILITY_ID, "Verify")
 
-        # Step 2: Clear
-        subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_CTRL_A'])
-        time.sleep(0.3)
-        subprocess.run(['adb', 'shell', 'input', 'keyevent', 'KEYCODE_DEL'])
-        time.sleep(0.5)
+            if otp_fields and verify_btn:
+                print("[wait_for_otp_screen] FOUND")
+                return True
 
-        # Step 3: Re-focus (clear often drops focus)
-        adb_tap(540, 772)
-        time.sleep(0.8)
+            time.sleep(1)
 
-        # Step 4: Send each digit as its own keyevent
-        for i, digit in enumerate(otp_str):
-            keycode = DIGIT_KEYCODE.get(digit)
-            if keycode is None:
-                print(f" Unexpected character '{digit}' in OTP — skipping")
-                continue
-            adb_key(keycode)
-            print(f"   Box {i+1}: '{digit}' ✓")
-
-        time.sleep(1)
-        print(f"All {len(otp_str)} OTP digits entered")
+        raise AssertionError("OTP screen not found")
 
     def tap_verify(self):
-        """
-        Verify button bounds: [42,1124][1038,1276] → center (540, 1200)
-        Tries Appium element first, then falls back to coordinate tap.
-        """
-        try:
-            btn = self.wait.until(EC.element_to_be_clickable(self.VERIFY_BTN))
-            btn.click()
-            print(" Verify clicked via Appium element")
-        except Exception:
-            print(" Appium click failed — adb tap (540, 1200)")
-            adb_tap(540, 1200)
-        time.sleep(3)
-
-    def tap_resend_otp(self):
-        btn = self.wait.until(EC.element_to_be_clickable(self.RESEND_OTP_BTN))
+        btn = self.wait.until(
+            EC.element_to_be_clickable(self.VERIFY_BUTTON)
+        )
         btn.click()
-        time.sleep(2)
 
-    def is_error_displayed(self):
-        try:
+
+
+
+#  ----------------------------------------------------------
+
+
+    def wait_for_pin_screen(self, timeout=30):
+        print("[wait_for_pin_screen] START")
+
+        end = time.time() + timeout
+
+        while time.time() < end:
+            page = self.driver.page_source.lower()
+
+            if "lockpassword" in page or "authentication required" in page:
+                print("[wait_for_pin_screen] FOUND")
+                return True
+
+            time.sleep(1)
+
+        print("[wait_for_pin_screen] NOT FOUND")
+        return False
+    # ---------------- PIN / SECURITY LOCK ----------------
+
+    def handle_pin_if_present(self, pin="1111"):
+        print("[handle_pin_if_present] CHECK")
+
+        page = self.driver.page_source.lower()
+
+        if "lockpassword" in page or "authentication required" in page:
+            print("[handle_pin_if_present] PIN screen detected")
+
+            try:
+                # 1. Locate element (NO clickable wait)
+                pin_field = self.driver.find_element(
+                    AppiumBy.ID,
+                    "com.android.systemui:id/lockPassword"
+                )
+
+                # 2. Force focus
+                pin_field.click()
+                time.sleep(1)
+
+                # 3. Send PIN directly
+                pin_field.send_keys(pin)
+
+                print("[handle_pin_if_present] PIN entered")
+
+                # 4. Press ENTER (important for system UI)
+                self.driver.press_keycode(66)
+
+                time.sleep(3)
+
+            except Exception as e:
+                print("[PIN ERROR]", e)
+
+        else:
+            print("[handle_pin_if_present] No PIN screen")
+
+    # ✅ REQUIRED FIX (for conftest.py compatibility)
+    def bypass_security_lock(self, pin="1111"):
+        """
+        Wrapper used by conftest.py
+        """
+        print("[bypass_security_lock] START")
+        self.handle_pin_if_present(pin)
+        print("[bypass_security_lock] DONE")
+
+    # ---------------- POWER SCREEN ----------------
+
+    def is_power_screen(self):
+        page = self.driver.page_source.lower()
+        return "power" in page and "distribution" in page
+
+    def wait_for_power_screen(self, timeout=60):
+        print("[wait_for_power_screen] START")
+
+        end = time.time() + timeout
+        while time.time() < end:
+            if self.is_power_screen():
+                print("[wait_for_power_screen] FOUND")
+                return True
             time.sleep(2)
-            el = self.driver.find_element(*self.ERROR_MESSAGE)
-            return el.is_displayed()
-        except Exception:
-            return False
 
-    def get_error_text(self):
-        try:
-            el = self.driver.find_element(*self.ERROR_MESSAGE)
-            return el.get_attribute("content-desc")
-        except Exception:
-            return ""
+        raise AssertionError("Power screen not loaded")
 
-    # ── Full Login Flow ───────────────────────────────────────────
+    # ---------------- FULL OTP LOGIN ----------------
+
     def login_with_otp(self, email, otp_fetcher_func):
+        print("[login_with_otp] START")
+
         self.wait_for_login_screen()
         self.enter_email(email)
-
-        # Record time BEFORE triggering OTP so gmail fetcher ignores older emails
-        otp_requested_at = time.time()
-
-        self.tap_login()
+        self.tap_send_otp()
+        request_time = time.time()
         self.wait_for_otp_screen()
 
-        # Pass the timestamp so fetcher only picks up the NEW email
-        otp = otp_fetcher_func(since_timestamp=otp_requested_at)
+        # otp = otp_fetcher_func()
+        otp = otp_fetcher_func(since_timestamp=request_time)
+        print("[OTP]", otp)
 
-        assert otp, "Could not retrieve OTP from Gmail"
-        print(f" OTP to enter: {otp}")
+        input("🔐 Enter OTP manually then press ENTER...")
 
-        self.enter_otp(otp)
         self.tap_verify()
-        print("Login flow completed")
+        print("[login_with_otp] OTP submitted, waiting for next screen...")
+
+        time.sleep(5)   # allow transition
+
+        pin_found = self.wait_for_pin_screen(timeout=20)
+
+        if pin_found:
+            self.handle_pin_if_present(pin="1111")
+        else:
+            print("[WARN] PIN screen did not appear")
+
+        self.wait_for_power_screen()
+
+        print("[login_with_otp] DONE")
+
+
+
+        
+
+    # ---------------- MAIN ENTRY POINT ----------------
+
+    def handle_app_start(self, email, otp_fetcher_func, pin="1111"):
+        print("[handle_app_start] START")
+
+        time.sleep(5)
+        page = self.driver.page_source.lower()
+
+        # CASE 1: PIN SCREEN FIRST
+        if "lockpassword" in page or "authentication required" in page:
+            self.handle_pin_if_present(pin)
+            self.wait_for_power_screen()
+            return
+
+        # CASE 2: LOGIN SCREEN
+        if self.driver.find_elements(*self.LOGIN_BUTTON):
+            print("[handle_app_start] LOGIN FLOW")
+            self.login_with_otp(email, otp_fetcher_func)
+            return
+
+        # CASE 3: ALREADY LOGGED IN
+        print("[handle_app_start] Already inside app")
+        self.handle_pin_if_present(pin)
+        self.wait_for_power_screen()
+
+        print("[handle_app_start] DONE")
+
+
+
+        # ── Helpers ───────────────────────────────────────────────
+
+    def clear_email_field(self):
+        field = self.wait.until(EC.element_to_be_clickable(self.LOGIN_EMAIL))
+        field.click()
+        try:
+            field.clear()
+        except Exception:
+            pass
+
+        try:
+            self.driver.press_keycode(123)  # move cursor to end
+            text = field.text or ""
+            for _ in range(len(text)):
+                self.driver.press_keycode(67)  # backspace/delete
+        except Exception:
+            pass
+
+    def get_error_message(self, timeout=8):
+        """
+        Poll page_source for known error strings.
+        Flutter renders errors as plain View text — not always a TextView node.
+        """
+        known_errors = [
+            "invalid email",
+            "please enter your email or phone number",
+            "enter a valid email",
+            "email is not valid",
+        ]
+        end = time.time() + timeout
+        while time.time() < end:
+            page = self.driver.page_source.lower()
+            for err in known_errors:
+                if err in page:
+                    print(f"[get_error_message] Found: '{err}'")
+                    return err
+            time.sleep(0.5)
+        return None
+
+    def tap_login_without_otp(self):
+        """Just tap Login — used for negative tests, no OTP flow."""
+        btn = self.wait.until(EC.element_to_be_clickable(self.LOGIN_BUTTON))
+        btn.click()

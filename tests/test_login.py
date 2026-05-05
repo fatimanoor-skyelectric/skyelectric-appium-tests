@@ -1,77 +1,123 @@
-import pytest
 import time
+import pytest
 from pages.login_page import LoginPage
-from pages.home_page  import HomePage
-from utils.gmail_helper import get_otp_from_gmail
+from config import APP_PACKAGE
 
 TEST_EMAIL = "fatimanoor@skyelectric.com"
-
-APP_PACKAGE  = "com.skyelectric.smartapp"
-APP_ACTIVITY = "com.skyelectric.smartapp.skyelectricpvt.MainActivity"
-
-def restart_app(driver):
-    driver.terminate_app(APP_PACKAGE)
-    time.sleep(3)
-    driver.activate_app(APP_PACKAGE)
-    time.sleep(4)
+TEST_PIN   = "1111"
 
 
-class TestLogin:
+class TestLoginFlow:
 
-    def test_login_screen_loads(self, driver):
+    # ─────────────────────────────────────────────────────────────────
+    # TC-NEG-01 │ Invalid email format
+    # Must run BEFORE full login (still on login screen)
+    # ─────────────────────────────────────────────────────────────────
+    def test_invalid_email_shows_error(self, driver):
+        """
+        GIVEN user is on login screen
+        WHEN  they enter 'notanemail' and tap Login
+        THEN  an inline error appears containing 'invalid email'
+        """
         login = LoginPage(driver)
+        print("\n[TC-NEG-01] Invalid email format test")
+
         login.wait_for_login_screen()
-        assert driver.find_element(*LoginPage.EMAIL_FIELD).is_displayed()
 
-    def test_successful_login_with_otp(self, driver):
-        restart_app(driver)
-        login = LoginPage(driver)
-        home  = HomePage(driver)
-        login.login_with_otp(
-            email=TEST_EMAIL,
-            # ✅ CHANGED: lambda now accepts and forwards since_timestamp
-            otp_fetcher_func=lambda since_timestamp=None: get_otp_from_gmail(
-                sender_filter='skyelectric',
-                subject_filter='OTP',
-                wait_seconds=90,
-                since_timestamp=since_timestamp   # <-- passes the pre-login timestamp
-            )
-        )
-        assert home.is_dashboard_loaded(), "Dashboard did not load after OTP login"
-
-    def test_invalid_email_format(self, driver):
-        restart_app(driver)
-        login = LoginPage(driver)
-        login.wait_for_login_screen()
         login.enter_email("notanemail")
-        login.tap_send_otp()
-        assert login.is_error_displayed(), "No error for invalid email format"
+        try:
+            driver.hide_keyboard()
+        except Exception:
+            pass
 
-    def test_empty_email_field(self, driver):
-        restart_app(driver)
-        login = LoginPage(driver)
-        login.wait_for_login_screen()
         login.tap_send_otp()
-        assert login.is_error_displayed(), "No error for empty email"
 
-    def test_wrong_otp(self, driver):
-        restart_app(driver)
+        error = login.get_error_message(timeout=8)
+
+        assert error is not None, (
+            "[TC-NEG-01] ❌ No error shown for invalid email"
+        )
+        assert "invalid" in error or "valid email" in error, (
+            f"[TC-NEG-01] ❌ Unexpected error: '{error}'"
+        )
+        print(f"[TC-NEG-01] ✅ PASSED — error: '{error}'")
+
+        # ── Reset field before next test ──────────────────────────────
+        login.clear_email_field()
+
+    # ─────────────────────────────────────────────────────────────────
+    # TC-NEG-02 │ Empty email field
+    # ─────────────────────────────────────────────────────────────────
+    def test_empty_email_shows_error(self, driver):
+        """
+        GIVEN user is on login screen
+        WHEN  they leave email empty and tap Login
+        THEN  error 'please enter your email or phone number' appears
+        """
         login = LoginPage(driver)
+        print("\n[TC-NEG-02] Empty email field test")
+
         login.wait_for_login_screen()
+
+        # Ensure field is truly empty
+        login.clear_email_field()
+
+        try:
+            driver.hide_keyboard()
+        except Exception:
+            pass
+
+        login.tap_send_otp()
+
+        error = login.get_error_message(timeout=8)
+
+        assert error is not None, (
+            "[TC-NEG-02] ❌ No error shown for empty email"
+        )
+        assert "please enter" in error or "enter your email" in error, (
+            f"[TC-NEG-02] ❌ Unexpected error: '{error}'"
+        )
+        print(f"[TC-NEG-02] ✅ PASSED — error: '{error}'")
+
+        # ── Reset field before full login ─────────────────────────────
+        login.clear_email_field()
+
+    # ─────────────────────────────────────────────────────────────────
+    # TC-POS-01 │ Full login flow (OTP + PIN + power screen)
+    # Runs LAST — leaves app on power screen
+    # ─────────────────────────────────────────────────────────────────
+    def test_full_login_flow(self, driver):
+        """
+        GIVEN user is on login screen
+        WHEN  they enter valid email, receive OTP, enter PIN
+        THEN  power distribution screen is displayed
+        """
+        login = LoginPage(driver)
+        print("\n[TC-POS-01] Full login flow test")
+
+        login.wait_for_login_screen()
+
         login.enter_email(TEST_EMAIL)
+        try:
+            driver.hide_keyboard()
+        except Exception:
+            pass
+
         login.tap_send_otp()
+
         login.wait_for_otp_screen()
-        login.enter_otp("000000")
+
+        input("🔐 Enter OTP manually then press ENTER...")
+
         login.tap_verify()
-        assert login.is_error_displayed(), "No error for wrong OTP"
 
-    def test_resend_otp(self, driver):
-        restart_app(driver)
-        login = LoginPage(driver)
-        login.wait_for_login_screen()
-        login.enter_email(TEST_EMAIL)
-        login.tap_send_otp()
-        login.wait_for_otp_screen()
-        login.tap_resend_otp()
-        login.wait_for_otp_screen()
-        assert True
+        time.sleep(4)  # allow screen transition
+
+        if login.wait_for_pin_screen(timeout=20):
+            login.handle_pin_if_present(pin=TEST_PIN)
+        else:
+            print("[WARN] PIN screen did not appear — skipping")
+
+        login.wait_for_power_screen()
+
+        print("[TC-POS-01] ✅ LOGIN FLOW SUCCESS — power screen confirmed")

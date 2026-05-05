@@ -1,0 +1,222 @@
+import time
+import subprocess
+import re
+from appium.webdriver.common.appiumby import AppiumBy
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+ADB = '/home/fatima/android-sdk/platform-tools/adb'
+
+
+def adb_run(*args):
+    return subprocess.run([ADB] + list(args), capture_output=True, text=True)
+
+
+def adb_tap(x, y):
+    adb_run('shell', 'input', 'tap', str(x), str(y))
+    time.sleep(0.8)
+
+
+def adb_type(text):
+    subprocess.run([ADB, 'shell', 'input', 'text', str(text)])
+    time.sleep(0.8)
+
+
+def adb_dump():
+    subprocess.run([ADB, 'shell', 'uiautomator', 'dump', '/sdcard/ui.xml'], capture_output=True, text=True)
+    return subprocess.run([ADB, 'shell', 'cat', '/sdcard/ui.xml'], capture_output=True, text=True).stdout
+
+
+def take_screenshot(name):
+    path = f'/tmp/{name}.png'
+    with open(path, 'wb') as f:
+        subprocess.run([ADB, 'exec-out', 'screencap', '-p'], stdout=f)
+
+
+class LoginPage:
+   
+    LOGIN_EMAIL = (AppiumBy.CLASS_NAME, 'android.widget.EditText')
+    LOGIN_BUTTON = (AppiumBy.ACCESSIBILITY_ID, 'Login')
+    VERIFY_BUTTON = (AppiumBy.ACCESSIBILITY_ID, 'Verify')
+
+    def __init__(self, driver):
+        self.driver = driver
+        self.wait = WebDriverWait(driver, 25)
+
+    def wait_for_login_screen(self):
+        print("[wait_for_login_screen] START")
+        self.wait.until(EC.presence_of_element_located(self.LOGIN_EMAIL))
+        time.sleep(1)
+        print("[wait_for_login_screen] DONE - login screen found")
+
+    def enter_email(self, email):
+        print(f"[enter_email] START email={email}")
+        field = self.wait.until(EC.element_to_be_clickable(self.LOGIN_EMAIL))
+        field.click()
+        time.sleep(0.5)
+
+        try:
+            field.clear()
+        except:
+            pass
+
+        field.send_keys(email)
+        time.sleep(0.5)
+        take_screenshot('after_email')
+        print("[enter_email] DONE")
+
+    def tap_send_otp(self):
+        print("[tap_send_otp] START")
+
+        try:
+            if self.driver.is_keyboard_shown():
+                self.driver.hide_keyboard()
+                time.sleep(1)
+        except:
+            pass
+
+        login_btn = self.wait.until(EC.element_to_be_clickable(self.LOGIN_BUTTON))
+        login_btn.click()
+
+        time.sleep(3)
+        take_screenshot('after_login_tap')
+        print("[tap_send_otp] DONE")
+
+    def wait_for_otp_screen(self, timeout=60):
+        print(f"[wait_for_otp_screen] START timeout={timeout}")
+
+        end = time.time() + timeout
+        while time.time() < end:
+            try:
+                otp_fields = self.driver.find_elements(AppiumBy.CLASS_NAME, 'android.widget.EditText')
+                verify_btns = self.driver.find_elements(AppiumBy.ACCESSIBILITY_ID, 'Verify')
+
+                # print(f"[wait_for_otp_screen] edittexts={len(otp_fields)} verify_buttons={len(verify_btns)}")
+
+                if otp_fields and verify_btns:
+                    # ✔ IMPORTANT FIX: allow Flutter to render fully
+                    time.sleep(2)
+                    print("[wait_for_otp_screen] DONE - otp screen found")
+                    return True
+
+            except Exception as e:
+                print(f"[wait_for_otp_screen] loop error: {e}")
+
+            time.sleep(1)
+
+        raise AssertionError("OTP screen did not appear")
+
+    def enter_otp(self, otp):
+        print(f"[enter_otp] RAW otp={otp}")
+
+        # Wait until OTP is actually available
+        WebDriverWait(self.driver, 60).until(
+            lambda d: otp is not None and len(str(otp).strip()) > 0
+        )
+
+        # Clean OTP
+        otp = re.sub(r'\D', '', str(otp)).strip()
+        print(f"[enter_otp] CLEAN otp={otp}")
+
+        assert len(otp) == 6, f"OTP must be 6 digits, got: {otp}"
+
+        # Wait for OTP field (single EditText from your XML)
+        otp_field = WebDriverWait(self.driver, 15).until(
+            EC.presence_of_element_located((AppiumBy.CLASS_NAME, "android.widget.EditText"))
+        )
+
+        # OPTIONAL: click only if not focused
+        try:
+            if not otp_field.get_attribute("focused") == "true":
+                otp_field.click()
+                time.sleep(0.5)
+        except:
+            otp_field.click()
+            time.sleep(0.5)
+
+        print("[enter_otp] Field ready")
+
+        # Keycode mapping (Android)
+        key_map = {
+            '0': 7, '1': 8, '2': 9, '3': 10, '4': 11,
+            '5': 12, '6': 13, '7': 14, '8': 15, '9': 16
+        }
+
+        # Enter OTP digit by digit
+        for digit in otp:
+            self.driver.press_keycode(key_map[digit])
+            time.sleep(0.2)
+
+        print("[enter_otp] OTP entered")
+
+        # Small wait for UI processing
+        time.sleep(1)
+
+        # Click Verify ONCE (important)
+        verify_btn = WebDriverWait(self.driver, 15).until(
+            EC.element_to_be_clickable((AppiumBy.ACCESSIBILITY_ID, "Verify"))
+        )
+
+        verify_btn.click()
+
+        print("[enter_otp] Verify clicked")
+        # -------------------------------------------------
+
+    def tap_verify(self):
+        print("adding a pause")
+        time.sleep(2)
+        print("[tap_verify] START")
+        # Verify button center from XML bounds [42,1124][1038,1276]
+        adb_tap(540, 1200)
+        time.sleep(3)
+        take_screenshot("after_verify")
+        print("[tap_verify] DONE")
+
+    def bypass_security_lock(self):
+        print("[bypass_security_lock] START")
+        time.sleep(2)
+
+        xml = adb_dump()
+
+        if 'Authentication required' in xml or 'PIN' in xml:
+            pin_field = self.wait.until(
+                EC.element_to_be_clickable((AppiumBy.CLASS_NAME, 'android.widget.EditText'))
+            )
+
+            pin_field.click()
+            try:
+                pin_field.clear()
+            except:
+                pass
+
+            pin_field.send_keys('1111')
+            self.driver.press_keycode(66)
+            time.sleep(2)
+            take_screenshot('after_pin')
+        else:
+            print("[bypass_security_lock] no security lock")
+
+        print("[bypass_security_lock] DONE")
+
+    def login_with_otp(self, email, otp_fetcher_func):
+        print("[login_with_otp] START")
+
+        self.wait_for_login_screen()
+        self.enter_email(email)
+
+        otp_ts = time.time()
+        self.tap_send_otp()
+
+        self.wait_for_otp_screen()
+
+        print("[login_with_otp] fetching otp...")
+        otp = otp_fetcher_func(since_timestamp=otp_ts)
+
+        print(f"[login_with_otp] otp fetched={otp}")
+        assert otp, "OTP not received from Gmail"
+
+        otp = re.sub(r'\D', '', str(otp)).strip()
+
+        self.enter_otp(otp)
+        # self.tap_verify()
+        self.bypass_security_lock()
