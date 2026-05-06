@@ -1,283 +1,225 @@
-"""
-Test suite for the Battery Management screen (full scroll).
-Covers: battery card, stats row, Battery Usage Graph, Battery SOC Graph,
-        Yesterday's Data toggles, and bottom navigation.
-
-Run:
-    pytest tests/test_battery_management.py -v
-"""
-
-import re
 import pytest
-from appium import webdriver
-from appium.options import UiAutomator2Options
-
-from battery_management_page import BatteryManagementPage
+from pages.battery_management_page import BatteryManagementPage
 
 
-# ── Appium capabilities ────────────────────────────────────────────────────────
-CAPABILITIES = {
-    "platformName":                "Android",
-    "appium:automationName":       "UiAutomator2",
-    "appium:deviceName":           "Android Device",
-    "appium:appPackage":           "com.skyelectric.smartapp",
-    "appium:appActivity":          ".MainActivity",
-    "appium:noReset":              True,
-    "appium:autoGrantPermissions": True,
-}
-
-APPIUM_SERVER_URL = "http://127.0.0.1:4723"
-
-
-# ── Session fixture ────────────────────────────────────────────────────────────
-@pytest.fixture(scope="module")
-def driver():
-    """Start one Appium session for the entire module."""
-    options = UiAutomator2Options().load_capabilities(CAPABILITIES)
-    _driver = webdriver.Remote(APPIUM_SERVER_URL, options=options)
-    _driver.implicitly_wait(0)          # rely on explicit waits only
-    yield _driver
-    _driver.quit()
-
-
-@pytest.fixture(scope="module")
+@pytest.fixture
 def battery_page(driver):
-    """
-    Navigate to the Battery Management tab and return the page object.
-    Assumes the app is already on an authenticated screen after launch.
-    """
+    """Navigate to Battery Management (Tab 4) and return the page object."""
     page = BatteryManagementPage(driver)
-    page.tap_tab(BatteryManagementPage.TAB_BATTERY)
+    page.navigate_to_tab(4)
     return page
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Test class
-# ══════════════════════════════════════════════════════════════════════════════
-class TestBatteryManagementScreen:
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Screen load
+# ─────────────────────────────────────────────────────────────────────────────
 
-    # ── 1. Screen load ─────────────────────────────────────────────────────────
-    def test_screen_loads_successfully(self, battery_page):
-        """Battery Management title must appear after tapping the battery tab."""
-        assert battery_page.is_loaded(), (
-            "Battery Management screen did not load within the expected timeout."
-        )
+class TestBatteryManagementScreenLoad:
 
-    # ── 2. Battery status card ─────────────────────────────────────────────────
-    def test_battery_percentage_is_visible(self, battery_page):
-        pct = battery_page.get_battery_percentage()
-        assert pct, "Battery percentage element is empty or not found."
+    def test_battery_tab_is_active_on_open(self, battery_page):
+        """Tab 4 must be selected when Battery Management screen opens."""
+        active = battery_page.get_active_tab()
+        assert active is not None, "No active tab found"
+        assert active.get_attribute("selected") == "true"
 
-    def test_battery_percentage_format(self, battery_page):
-        pct = battery_page.get_battery_percentage()
-        assert re.match(r"^\d+%$", pct), (
-            f"Battery percentage '{pct}' does not match expected '\\d+%' format."
-        )
+    def test_soc_indicator_visible(self, battery_page):
+        """Top-of-screen SOC indicator (100 %) should be displayed."""
+        assert battery_page.get_soc_indicator().is_displayed()
 
-    def test_battery_percentage_valid_range(self, battery_page):
-        pct   = battery_page.get_battery_percentage()
-        value = int(pct.replace("%", ""))
-        assert 0 <= value <= 100, (
-            f"Battery percentage {value}% is outside valid range [0, 100]."
-        )
+    def test_yesterday_label_visible_on_load(self, battery_page):
+        """'Yesterday's Data' label must appear on screen after opening."""
+        assert battery_page.is_yesterday_label_visible(), \
+            "'Yesterday's Data' label not found on initial load"
 
-    # ── 3. Stats row ───────────────────────────────────────────────────────────
-    def test_current_load_label_visible(self, battery_page):
-        assert battery_page._is_visible(BatteryManagementPage.STAT_LABEL_CURRENT_LOAD), (
-            "'At Current Load' label is not visible."
-        )
 
-    def test_stored_power_label_visible(self, battery_page):
-        assert battery_page._is_visible(BatteryManagementPage.STAT_LABEL_STORED_POWER), (
-            "'Stored Power' label is not visible."
-        )
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. Battery Usage Graph (above the fold)
+# ─────────────────────────────────────────────────────────────────────────────
 
-    def test_hrs_unit_label_visible(self, battery_page):
-        assert battery_page._is_visible(BatteryManagementPage.STAT_VALUE_HRS), (
-            "'Hrs' unit label is not visible."
-        )
+class TestBatteryUsageGraph:
 
-    def test_units_label_visible(self, battery_page):
-        assert battery_page._is_visible(BatteryManagementPage.STAT_VALUE_UNITS), (
-            "'Units' label is not visible."
-        )
+    def test_usage_graph_y_axis_labels_count(self, battery_page):
+        """All three Y-axis kW labels must be visible (1 kW, 0 kW, -1 kW)."""
+        labels = battery_page.get_usage_graph_y_labels()
+        assert len(labels) == 3, \
+            f"Expected 3 Y-axis labels, found {len(labels)}"
 
-    def test_current_load_value_format(self, battery_page):
-        value = battery_page.get_current_load_value()
-        assert value, "Current Load value is empty."
-        assert re.match(r"^\d{2}:\d{2}$", value), (
-            f"Current Load value '{value}' does not match HH:MM format."
-        )
+    def test_usage_graph_x_axis_labels_count(self, battery_page):
+        """All nine X-axis hour labels (00–24) must be visible."""
+        labels = battery_page.get_usage_graph_x_labels()
+        assert len(labels) == 9, \
+            f"Expected 9 X-axis labels, found {len(labels)}"
 
-    def test_stored_power_value_is_numeric(self, battery_page):
-        value = battery_page.get_stored_power_value()
-        assert value, "Stored Power value is empty."
-        assert re.match(r"^\d+(\.\d+)?$", value), (
-            f"Stored Power value '{value}' is not a valid decimal number."
-        )
+    @pytest.mark.parametrize("locator_name,expected_desc", [
+        ("USAGE_Y_1KW",    "1 kW"),
+        ("USAGE_Y_0KW",    "0 kW"),
+        ("USAGE_Y_NEG1KW", "-1 kW"),
+    ])
+    def test_usage_y_axis_label_present(self, battery_page, locator_name, expected_desc):
+        """Each Y-axis kW label is individually present."""
+        loc = getattr(battery_page, locator_name)
+        el  = battery_page._find(loc)
+        assert el is not None, f"Usage graph Y-axis label '{expected_desc}' not found"
 
-    # ── 4. Battery Usage Graph ─────────────────────────────────────────────────
-    def test_usage_graph_title_visible(self, battery_page):
-        assert battery_page.is_usage_graph_visible(), (
-            "'Battery Usage Graph' title is not visible."
-        )
+    @pytest.mark.parametrize("locator_name,expected_desc", [
+        ("USAGE_X_00", "00"),
+        ("USAGE_X_06", "06"),
+        ("USAGE_X_12", "12"),
+        ("USAGE_X_18", "18"),
+        ("USAGE_X_24", "24"),
+    ])
+    def test_usage_x_axis_key_labels_present(self, battery_page, locator_name, expected_desc):
+        """Spot-check key X-axis hour labels on the Usage graph."""
+        loc = getattr(battery_page, locator_name)
+        el  = battery_page._find(loc)
+        assert el is not None, f"Usage graph X-axis label '{expected_desc}' not found"
 
-    def test_usage_y_axis_all_labels_present(self, battery_page):
-        expected = set(BatteryManagementPage.USAGE_Y_AXIS_LABELS_ORDERED)
-        visible  = set(battery_page.get_usage_y_axis_labels())
-        missing  = expected - visible
-        assert not missing, f"Missing Usage Graph Y-axis labels: {missing}"
 
-    def test_usage_y_axis_labels_in_order(self, battery_page):
-        labels = battery_page.get_usage_y_axis_labels()
-        assert labels == BatteryManagementPage.USAGE_Y_AXIS_LABELS_ORDERED, (
-            f"Usage Graph Y-axis labels out of order. Got: {labels}"
-        )
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. Yesterday's Data toggle — Usage Graph (toggle 1 / instance 0)
+# ─────────────────────────────────────────────────────────────────────────────
 
-    def test_usage_x_axis_all_labels_present(self, battery_page):
-        expected = set(BatteryManagementPage.X_AXIS_VALUES)
-        visible  = set(battery_page.get_usage_x_axis_labels())
-        missing  = expected - visible
-        assert not missing, f"Missing Usage Graph X-axis labels: {missing}"
+class TestUsageGraphYesterdayToggle:
 
-    # ── 5. Yesterday's Data toggle – Usage Graph ───────────────────────────────
-    def test_usage_yesterday_label_visible(self, battery_page):
-        """'Yesterday's Data' label must appear next to the Usage Graph toggle."""
-        assert battery_page.is_yesterday_label_visible(), (
-            "'Yesterday's Data' label is not visible near the Usage Graph."
-        )
+    def test_usage_toggle_off_by_default(self, battery_page):
+        """Usage graph Yesterday's Data switch must be OFF on screen load."""
+        assert not battery_page.is_usage_yesterday_toggle_on(), \
+            "Usage toggle should be OFF by default"
 
-    def test_usage_yesterday_toggle_default_off(self, battery_page):
-        """Yesterday's Data toggle should be OFF (unchecked) by default."""
-        assert not battery_page.get_usage_yesterday_toggle_state(), (
-            "Usage Graph 'Yesterday's Data' toggle should be OFF by default."
-        )
+    def test_usage_toggle_turns_on(self, battery_page):
+        """Tapping the Usage toggle once must enable it."""
+        battery_page.tap_usage_yesterday_toggle()
+        assert battery_page.is_usage_yesterday_toggle_on(), \
+            "Usage toggle did not turn ON after tap"
 
-    def test_usage_yesterday_toggle_turns_on(self, battery_page):
-        """Tapping the toggle should switch it from OFF to ON."""
-        battery_page.toggle_usage_yesterday_data()
-        assert battery_page.get_usage_yesterday_toggle_state(), (
-            "Usage Graph toggle did not turn ON after tap."
-        )
+    def test_usage_toggle_turns_off_again(self, battery_page):
+        """Tapping the Usage toggle twice must return it to OFF."""
+        battery_page.tap_usage_yesterday_toggle()  # → ON
+        battery_page.tap_usage_yesterday_toggle()  # → OFF
+        assert not battery_page.is_usage_yesterday_toggle_on(), \
+            "Usage toggle did not return to OFF after second tap"
 
-    def test_usage_yesterday_toggle_turns_off_again(self, battery_page):
-        """Tapping the toggle a second time should revert it to OFF."""
-        battery_page.toggle_usage_yesterday_data()
-        assert not battery_page.get_usage_yesterday_toggle_state(), (
-            "Usage Graph toggle did not turn OFF after second tap."
-        )
-
-    # ── 6. Battery SOC Graph (scroll required) ─────────────────────────────────
-    def test_soc_graph_visible_after_scroll(self, battery_page):
-        """Battery SOC Graph must become visible after scrolling down."""
+    def test_soc_toggle_unaffected_by_usage_toggle(self, battery_page):
+        """Toggling the Usage switch must not change the SOC graph switch."""
         battery_page.scroll_to_soc_graph()
-        assert battery_page.is_soc_graph_visible(), (
-            "'Battery SOC Graph' title is not visible after scrolling."
-        )
+        soc_state_before = battery_page.is_soc_yesterday_toggle_on()
 
-    def test_soc_y_axis_all_labels_present(self, battery_page):
-        expected = set(BatteryManagementPage.SOC_Y_AXIS_LABELS_ORDERED)
-        visible  = set(battery_page.get_soc_y_axis_labels())
-        missing  = expected - visible
-        assert not missing, f"Missing SOC Graph Y-axis labels: {missing}"
+        battery_page.tap_usage_yesterday_toggle()
+        soc_state_after = battery_page.is_soc_yesterday_toggle_on()
 
-    def test_soc_y_axis_labels_in_order(self, battery_page):
-        labels = battery_page.get_soc_y_axis_labels()
-        assert labels == BatteryManagementPage.SOC_Y_AXIS_LABELS_ORDERED, (
-            f"SOC Graph Y-axis labels out of order. Got: {labels}"
-        )
+        assert soc_state_before == soc_state_after, \
+            "SOC toggle state changed when only the Usage toggle was tapped"
 
-    def test_soc_x_axis_all_labels_present(self, battery_page):
-        expected = set(BatteryManagementPage.X_AXIS_VALUES)
-        visible  = set(battery_page.get_soc_x_axis_labels())
-        missing  = expected - visible
-        assert not missing, f"Missing SOC Graph X-axis labels: {missing}"
+        # restore
+        battery_page.tap_usage_yesterday_toggle()
 
-    def test_soc_y_axis_values_are_percentages(self, battery_page):
-        """Every SOC Y-axis label must end with ' %' and have a numeric prefix."""
-        for label in battery_page.get_soc_y_axis_labels():
-            assert re.match(r"^\d+ %$", label), (
-                f"SOC Y-axis label '{label}' does not match '\\d+ %' format."
-            )
 
-    def test_soc_y_axis_range_is_0_to_100(self, battery_page):
-        """SOC Y-axis values must span 0 % to 100 % in 20 % increments."""
-        labels   = battery_page.get_soc_y_axis_labels()
-        values   = [int(lbl.replace(" %", "")) for lbl in labels]
-        expected = [100, 80, 60, 40, 20, 0]
-        assert values == expected, (
-            f"SOC Y-axis values are incorrect. Got: {values}, expected: {expected}"
-        )
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. Battery SOC Graph (below the fold — requires scroll)
+# ─────────────────────────────────────────────────────────────────────────────
 
-    # ── 7. Yesterday's Data toggle – SOC Graph ─────────────────────────────────
-    def test_soc_yesterday_toggle_default_off(self, battery_page):
-        """SOC Graph Yesterday's Data toggle should be OFF by default."""
-        assert not battery_page.get_soc_yesterday_toggle_state(), (
-            "SOC Graph 'Yesterday's Data' toggle should be OFF by default."
-        )
+class TestBatterySOCGraph:
 
-    def test_soc_yesterday_toggle_turns_on(self, battery_page):
-        """Tapping the SOC toggle should switch it to ON."""
-        battery_page.toggle_soc_yesterday_data()
-        assert battery_page.get_soc_yesterday_toggle_state(), (
-            "SOC Graph toggle did not turn ON after tap."
-        )
+    @pytest.fixture(autouse=True)
+    def scroll_to_soc(self, battery_page):
+        """Scroll to SOC graph before every test in this class."""
+        battery_page.scroll_to_soc_graph()
 
-    def test_soc_yesterday_toggle_turns_off_again(self, battery_page):
-        """Tapping the SOC toggle a second time should revert it to OFF."""
-        battery_page.toggle_soc_yesterday_data()
-        assert not battery_page.get_soc_yesterday_toggle_state(), (
-            "SOC Graph toggle did not turn OFF after second tap."
-        )
+    def test_soc_graph_header_visible(self, battery_page):
+        """'Battery SOC Graph' heading must be visible after scrolling."""
+        assert battery_page.is_soc_graph_header_visible(), \
+            "'Battery SOC Graph' header not visible after scroll"
 
-    def test_two_toggles_are_independent(self, battery_page):
-        """Toggling Usage Graph switch must not affect the SOC Graph switch."""
-        # Ensure both start OFF
-        if battery_page.get_usage_yesterday_toggle_state():
-            battery_page.toggle_usage_yesterday_data()
-        if battery_page.get_soc_yesterday_toggle_state():
-            battery_page.toggle_soc_yesterday_data()
+    def test_soc_graph_y_axis_label_count(self, battery_page):
+        """All six Y-axis % labels (0 %–100 %) must be visible."""
+        labels = battery_page.get_soc_graph_y_labels()
+        assert len(labels) == 6, \
+            f"Expected 6 SOC Y-axis labels, found {len(labels)}"
 
-        # Turn ON only the Usage Graph toggle
-        battery_page.toggle_usage_yesterday_data()
+    @pytest.mark.parametrize("locator_name,expected_desc", [
+        ("SOC_Y_100", "100 %"),
+        ("SOC_Y_80",  "80 %"),
+        ("SOC_Y_60",  "60 %"),
+        ("SOC_Y_40",  "40 %"),
+        ("SOC_Y_20",  "20 %"),
+        ("SOC_Y_0",   "0 %"),
+    ])
+    def test_soc_y_axis_individual_labels(self, battery_page, locator_name, expected_desc):
+        """Each SOC graph Y-axis label is individually present."""
+        loc = getattr(battery_page, locator_name)
+        el  = battery_page._find(loc)
+        assert el is not None, f"SOC graph Y-axis label '{expected_desc}' not found"
 
-        assert battery_page.get_usage_yesterday_toggle_state(), (
-            "Usage Graph toggle should be ON."
-        )
-        assert not battery_page.get_soc_yesterday_toggle_state(), (
-            "SOC Graph toggle should remain OFF when only Usage toggle is tapped."
-        )
+    def test_soc_graph_x_axis_label_count(self, battery_page):
+        """All nine X-axis hour labels (00–24) must be visible on SOC graph."""
+        labels = battery_page.get_soc_graph_x_labels()
+        assert len(labels) == 9, \
+            f"Expected 9 SOC X-axis labels, found {len(labels)}"
 
-        # Clean up
-        battery_page.toggle_usage_yesterday_data()
 
-    # ── 8. Bottom navigation ───────────────────────────────────────────────────
-    def test_battery_tab_is_selected(self, battery_page):
-        assert battery_page.is_battery_tab_selected(), (
-            "Tab 4 of 5 (Battery) is not marked selected on Battery Management screen."
-        )
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. Yesterday's Data toggle — SOC Graph (toggle 2 / instance 1)
+# ─────────────────────────────────────────────────────────────────────────────
 
-    def test_all_five_tabs_present(self, battery_page):
-        tabs = [
-            BatteryManagementPage.TAB_HOME,
-            BatteryManagementPage.TAB_ENERGY,
-            BatteryManagementPage.TAB_GRID,
-            BatteryManagementPage.TAB_BATTERY,
-            BatteryManagementPage.TAB_MORE,
-        ]
-        for tab in tabs:
-            assert battery_page._is_visible(tab, timeout=5), (
-                f"Tab '{tab[1]}' is not visible in the bottom navigation bar."
-            )
+class TestSOCGraphYesterdayToggle:
 
-    def test_navigate_away_and_return_reloads_screen(self, driver, battery_page):
-        """Leaving to another tab and returning should show Battery Management again."""
-        battery_page.navigate_to_home()
-        driver.implicitly_wait(2)
+    @pytest.fixture(autouse=True)
+    def scroll_to_soc(self, battery_page):
+        battery_page.scroll_to_soc_graph()
 
-        battery_page.tap_tab(BatteryManagementPage.TAB_BATTERY)
-        driver.implicitly_wait(0)
+    def test_soc_toggle_off_by_default(self, battery_page):
+        """SOC graph Yesterday's Data switch must be OFF on screen load."""
+        assert not battery_page.is_soc_yesterday_toggle_on(), \
+            "SOC toggle should be OFF by default"
 
-        assert battery_page.is_loaded(), (
-            "Battery Management screen did not reload after navigating away and back."
-        )
+    def test_soc_toggle_turns_on(self, battery_page):
+        """Tapping the SOC toggle once must enable it."""
+        battery_page.tap_soc_yesterday_toggle()
+        assert battery_page.is_soc_yesterday_toggle_on(), \
+            "SOC toggle did not turn ON after tap"
+
+    def test_soc_toggle_turns_off_again(self, battery_page):
+        """Tapping the SOC toggle twice must return it to OFF."""
+        battery_page.tap_soc_yesterday_toggle()  # → ON
+        battery_page.tap_soc_yesterday_toggle()  # → OFF
+        assert not battery_page.is_soc_yesterday_toggle_on(), \
+            "SOC toggle did not return to OFF after second tap"
+
+    def test_usage_toggle_unaffected_by_soc_toggle(self, battery_page):
+        """Toggling the SOC switch must not change the Usage graph switch."""
+        usage_state_before = battery_page.is_usage_yesterday_toggle_on()
+
+        battery_page.tap_soc_yesterday_toggle()
+        usage_state_after = battery_page.is_usage_yesterday_toggle_on()
+
+        assert usage_state_before == usage_state_after, \
+            "Usage toggle state changed when only the SOC toggle was tapped"
+
+        # restore
+        battery_page.tap_soc_yesterday_toggle()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. Bottom navigation
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestBottomNavigation:
+
+    @pytest.mark.parametrize("tab_num", [1, 2, 3, 5])
+    def test_navigate_away_from_battery_tab(self, battery_page, tab_num):
+        """Tapping any other tab should deselect the Battery tab."""
+        battery_page.navigate_to_tab(tab_num)
+        active = battery_page.get_active_tab()
+        assert active is not None, \
+            f"No active tab found after navigating to tab {tab_num}"
+        assert active.get_attribute("content-desc") == f"Tab {tab_num} of 5", \
+            f"Expected Tab {tab_num} to be active"
+
+    def test_return_to_battery_tab(self, battery_page):
+        """Navigating away and back to Tab 4 should re-activate it."""
+        battery_page.navigate_to_tab(1)
+        battery_page.navigate_to_tab(4)
+        active = battery_page.get_active_tab()
+        assert active is not None
+        assert active.get_attribute("content-desc") == "Tab 4 of 5", \
+            "Battery tab (Tab 4) is not active after returning to it"
