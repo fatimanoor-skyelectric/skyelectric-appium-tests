@@ -46,7 +46,7 @@ class LogoutPage:
     # ------------------------------------------------------------------ #
     PROFILE_SCREEN_INDICATOR = (
         AppiumBy.XPATH,
-        '//android.view.View[@content-desc="Logout"]',
+        '//android.view.View[@content-desc="Profile"]',
     )
 
     LOGOUT_ICON = (

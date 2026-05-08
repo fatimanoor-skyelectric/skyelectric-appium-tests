@@ -655,7 +655,8 @@ def driver(appium_server, device_name):
 
     yield drv
     drv.quit()
-    yield drv
+    
+    # teardown
     try:
         if drv.session_id:
             drv.quit()
