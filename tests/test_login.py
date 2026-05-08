@@ -87,17 +87,17 @@ class TestLoginFlow:
     # Runs LAST — leaves app on power screen
     # ─────────────────────────────────────────────────────────────────
     def test_full_login_flow(self, driver):
-        """
-        GIVEN user is on login screen
-        WHEN  they enter valid email, receive OTP, enter PIN
-        THEN  power distribution screen is displayed
-        """
+
+        driver.terminate_app(APP_PACKAGE)
+        driver.activate_app(APP_PACKAGE)
+
         login = LoginPage(driver)
         print("\n[TC-POS-01] Full login flow test")
 
         login.wait_for_login_screen()
 
         login.enter_email(TEST_EMAIL)
+
         try:
             driver.hide_keyboard()
         except Exception:
@@ -111,13 +111,11 @@ class TestLoginFlow:
 
         login.tap_verify()
 
-        time.sleep(4)  # allow screen transition
+        time.sleep(4)
 
         if login.wait_for_pin_screen(timeout=20):
             login.handle_pin_if_present(pin=TEST_PIN)
-        else:
-            print("[WARN] PIN screen did not appear — skipping")
 
         login.wait_for_power_screen()
 
-        print("[TC-POS-01] ✅ LOGIN FLOW SUCCESS — power screen confirmed")
+        print("[TC-POS-01] ✅ LOGIN FLOW SUCCESS")

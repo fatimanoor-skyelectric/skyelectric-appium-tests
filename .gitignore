@@ -7,4 +7,6 @@ credentials.json
 .env
 reports/screenshots
 config
-
+__pycache__/
+*.pyc
+reports/report.html
