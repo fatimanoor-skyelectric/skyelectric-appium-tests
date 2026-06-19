@@ -1,0 +1,22 @@
+# ─────────────────────────────────────────────
+# SkyElectric Appium Test Suite — Dependencies
+# Install with: pip install -r requirements.txt
+# ─────────────────────────────────────────────
+
+# Appium Python client (includes Selenium WebDriver)
+Appium-Python-Client>=3.1.0
+
+# Test framework
+pytest>=7.4.0
+
+# HTML test reports with screenshot embedding
+pytest-html>=4.1.0
+
+# Google API client for Gmail OTP retrieval
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.1.1
+
+# HTTP requests (used by gmail_helper and Appium internals)
+requests>=2.31.0
