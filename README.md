@@ -99,6 +99,11 @@ adb devices
 ```
 
 ---
+### Create a virtual device using Terminal command
+avdmanager create avd -n Pixel_5 \
+-k "system-images;android-34;google_apis;x86_64" \
+-d "pixel_5"
+
 
 ## Running Tests
 
